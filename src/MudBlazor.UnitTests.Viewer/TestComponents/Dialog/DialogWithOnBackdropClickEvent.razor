@@ -1,20 +1,18 @@
 ﻿<MudDialog OnBackdropClick="@OnBackdropClick">
     <TitleContent>
-        Title: @textTest
+        Title: @_textTest
     </TitleContent>
 </MudDialog>
 
-
 @code {
+    private string? _textTest;
 
     [CascadingParameter]
-    MudDialogInstance MudDialog { get; set; }
+    private IMudDialogInstance MudDialog { get; set; } = null!;
 
-    string textTest;
-
-    void OnBackdropClick()
+    private void OnBackdropClick()
     {
-        textTest = "Backdrop clicked";
-        MudDialog.ForceRender();
+        _textTest = "Backdrop clicked";
+        MudDialog.StateHasChanged();
     }
 }

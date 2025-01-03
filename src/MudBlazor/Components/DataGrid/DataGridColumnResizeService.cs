@@ -2,44 +2,43 @@
 // MudBlazor licenses this file to you under the MIT license.
 // See the LICENSE file in the project root for more information.
 
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Threading.Tasks;
+using System.Diagnostics.CodeAnalysis;
 using Microsoft.AspNetCore.Components.Web;
+using MudBlazor.Interfaces;
 
 namespace MudBlazor
 {
-    internal sealed class DataGridColumnResizeService<T>
+#nullable enable
+    internal sealed class DataGridColumnResizeService<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties)] T> : IAsyncDisposable
     {
-        private const string EventMouseMove = "mousemove";
-        private const string EventMouseUp = "mouseup";
+        private const string EventPointerMove = "pointermove";
+        private const string EventPointerUp = "pointerup";
 
         private readonly MudDataGrid<T> _dataGrid;
         private readonly IEventListener _eventListener;
         private ResizeMode _resizeMode;
 
-        private IList<Column<T>> _columns;
         private double _currentX;
         private double _startWidth;
         private double _nextStartWidth;
-        private Column<T> _startColumn;
-        private Column<T> _nextColumn;
-        private Guid _mouseMoveSubscriptionId;
-        private Guid _mouseUpSubscriptionId;
+        private Column<T>? _startColumn;
+        private Column<T>? _nextColumn;
+        private Guid _pointerMoveSubscriptionId;
+        private Guid _pointerUpSubscriptionId;
 
-        public DataGridColumnResizeService(MudDataGrid<T> dataGrid, IEventListener eventListener)
+        public DataGridColumnResizeService(MudDataGrid<T> dataGrid, IEventListenerFactory eventListenerFactory)
         {
             _dataGrid = dataGrid;
-            _eventListener = eventListener;
+            _eventListener = eventListenerFactory.Create();
         }
 
-        internal async Task<bool> StartResizeColumn(HeaderCell<T> headerCell, double clientX, IList<Column<T>> columns, ResizeMode columnResizeMode)
+        internal async Task<bool> StartResizeColumn(HeaderCell<T> headerCell, double clientX, IList<Column<T>> columns,
+                                                    ResizeMode columnResizeMode, bool rightToLeft)
         {
-            if ((headerCell?.Column?.Resizable ?? false) || columnResizeMode == ResizeMode.None || _mouseMoveSubscriptionId != default || _mouseUpSubscriptionId != default)
+            if (headerCell.Column?.Resizable is false || columnResizeMode == ResizeMode.None ||
+                _pointerMoveSubscriptionId != default || _pointerUpSubscriptionId != default)
                 return false;
 
-            _columns = columns;
             _resizeMode = columnResizeMode;
             _currentX = clientX;
 
@@ -49,70 +48,91 @@ namespace MudBlazor
             if (_resizeMode == ResizeMode.Column)
             {
                 // In case resize mode is column, we have to find any column right of the current one that can also be resized and is not hidden.
-                var nextResizableColumn = _columns.Skip(_columns.IndexOf(headerCell.Column) + 1).FirstOrDefault(c => c.Resizable ?? true && !c.Hidden);
-                if (null == nextResizableColumn)
-                    return false;
+                if (headerCell.Column is not null)
+                {
+                    var nextResizableColumn = columns.Skip(columns.IndexOf(headerCell.Column) + (rightToLeft ? -1 : 1))
+                        .FirstOrDefault(c => (c.Resizable ?? true) && !c.HiddenState.Value);
+                    if (nextResizableColumn == null)
+                        return false;
 
-                _nextStartWidth = await nextResizableColumn.HeaderCell.GetCurrentCellWidth();
-                _nextColumn = nextResizableColumn;
+                    _nextStartWidth = await nextResizableColumn.HeaderCell.GetCurrentCellWidth();
+                    _nextColumn = nextResizableColumn;
+                }
             }
 
-            _mouseMoveSubscriptionId = await _eventListener.SubscribeGlobal<MouseEventArgs>(EventMouseMove, 0, OnApplicationMouseMove);
-            _mouseUpSubscriptionId = await _eventListener.SubscribeGlobal<MouseEventArgs>(EventMouseUp, 0, OnApplicationMouseUp);
+            _pointerMoveSubscriptionId =
+                await _eventListener.SubscribeGlobal<PointerEventArgs>(EventPointerMove, 0,
+                    eventArgs => OnApplicationPointerMove(eventArgs, rightToLeft));
+            _pointerUpSubscriptionId =
+                await _eventListener.SubscribeGlobal<PointerEventArgs>(EventPointerUp, 0,
+                    eventArgs => OnApplicationPointerUp(eventArgs, rightToLeft));
 
             _dataGrid.IsResizing = true;
-            _dataGrid.ExternalStateHasChanged();
+            ((IMudStateHasChanged)_dataGrid).StateHasChanged();
             return true;
         }
 
-        private async Task OnApplicationMouseMove(object eventArgs)
+        private async Task OnApplicationPointerMove(object eventArgs, bool isRtl)
         {
-            await ResizeColumn(eventArgs, false);
+            await ResizeColumn(eventArgs, false, isRtl);
         }
 
-        private async Task OnApplicationMouseUp(object eventArgs)
+        private async Task OnApplicationPointerUp(object eventArgs, bool isRtl)
         {
-            var requiresUpdate = _mouseMoveSubscriptionId != default || _mouseUpSubscriptionId != default;
+            var requiresUpdate = _pointerMoveSubscriptionId != default || _pointerUpSubscriptionId != default;
 
             _dataGrid.IsResizing = false;
-            _dataGrid.ExternalStateHasChanged();
+            ((IMudStateHasChanged)_dataGrid).StateHasChanged();
             await UnsubscribeApplicationEvents();
 
             if (requiresUpdate)
             {
-                await ResizeColumn(eventArgs, true);
+                await ResizeColumn(eventArgs, true, isRtl);
             }
         }
 
         private async Task UnsubscribeApplicationEvents()
         {
-            if (_mouseMoveSubscriptionId != default)
+            if (_pointerMoveSubscriptionId != default)
             {
-                await _eventListener.Unsubscribe(_mouseMoveSubscriptionId);
-                _mouseMoveSubscriptionId = default;
+                await _eventListener.Unsubscribe(_pointerMoveSubscriptionId);
+                _pointerMoveSubscriptionId = default;
             }
 
-            if (_mouseUpSubscriptionId != default)
+            if (_pointerUpSubscriptionId != default)
             {
-                await _eventListener.Unsubscribe(_mouseUpSubscriptionId);
-                _mouseUpSubscriptionId = default;
+                await _eventListener.Unsubscribe(_pointerUpSubscriptionId);
+                _pointerUpSubscriptionId = default;
             }
         }
 
-        private async Task ResizeColumn(object eventArgs, bool finish)
+        private async Task ResizeColumn(object eventArgs, bool finish, bool isRtl)
         {
-            if (eventArgs is MouseEventArgs mouseEventArgs)
+            if (eventArgs is PointerEventArgs pointerEventArgs)
             {
                 // Need to update height, because resizing of columns can lead to height changes in grid (due to line-breaks)
                 var gridHeight = await _dataGrid.GetActualHeight();
 
-                var deltaX = mouseEventArgs.ClientX - _currentX;
+                var deltaX = 0.0;
+                if (isRtl)
+                {
+                    deltaX = (_currentX - pointerEventArgs.ClientX);
+                }
+                else
+                {
+                    deltaX = (pointerEventArgs.ClientX - _currentX);
+                }
+
                 var targetWidth = _startWidth + deltaX;
 
                 // Easy case: ResizeMode is container, we simply update the width of the resized column
                 if (_resizeMode == ResizeMode.Container)
                 {
-                    await _startColumn.HeaderCell.UpdateColumnWidth(targetWidth, gridHeight, finish);
+                    if (_startColumn is not null)
+                    {
+                        await _startColumn.HeaderCell.UpdateColumnWidth(targetWidth, gridHeight, finish);
+                    }
+
                     return;
                 }
 
@@ -122,10 +142,22 @@ namespace MudBlazor
 
                 // In case we shrink the current column, make sure to not shrink further after min width has been reached:
                 if (deltaX < 0)
-                    await ResizeColumns(_startColumn, _nextColumn, targetWidth, nextTargetWidth, gridHeight, finish);
+                {
+                    if (_startColumn is not null && _nextColumn is not null)
+                    {
+                        await ResizeColumns(_startColumn, _nextColumn, targetWidth, nextTargetWidth, gridHeight,
+                            finish);
+                    }
+                }
                 // In case we enlarge, we first shrink the following column and ensure it is not shrinked beyond min width:
                 else
-                    await ResizeColumns(_nextColumn, _startColumn, nextTargetWidth, targetWidth, gridHeight, finish);
+                {
+                    if (_nextColumn is not null && _startColumn is not null)
+                    {
+                        await ResizeColumns(_nextColumn, _startColumn, nextTargetWidth, targetWidth, gridHeight,
+                            finish);
+                    }
+                }
             }
         }
 
@@ -139,5 +171,7 @@ namespace MudBlazor
 
             await columnToEnlarge.HeaderCell.UpdateColumnWidth(enlargedWidth, gridHeight, finish);
         }
+
+        public ValueTask DisposeAsync() => _eventListener.DisposeAsync();
     }
 }

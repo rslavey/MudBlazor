@@ -4,7 +4,9 @@ using System.Threading.Tasks;
 using Bunit;
 using FluentAssertions;
 using Microsoft.Extensions.DependencyInjection;
+using MudBlazor.Interfaces;
 using MudBlazor.UnitTests.Mocks;
+using MudBlazor.UnitTests.Shared.Mocks;
 using NUnit.Framework;
 
 namespace MudBlazor.UnitTests.Components
@@ -43,7 +45,7 @@ namespace MudBlazor.UnitTests.Components
             var section1 = new MudPageContentSection("my section", "my-id");
             var section2 = new MudPageContentSection("my section 2", "my-id-2");
 
-            if (withUpdate == true)
+            if (withUpdate)
             {
                 await comp.InvokeAsync(() => comp.Instance.AddSection(section1, true));
                 await comp.InvokeAsync(() => comp.Instance.AddSection(section2, true));
@@ -52,10 +54,10 @@ namespace MudBlazor.UnitTests.Components
             {
                 comp.Instance.AddSection(section1, false);
                 comp.Instance.AddSection(section2, false);
-                await comp.InvokeAsync(() => comp.Instance.Update());
+                await comp.InvokeAsync(() => ((IMudStateHasChanged)comp.Instance).StateHasChanged());
             }
 
-            comp.RenderCount.Should().Be(withUpdate == true ? 3 : 2);
+            comp.RenderCount.Should().Be(withUpdate ? 3 : 2);
 
             comp.Instance.ActiveSection.Should().BeNull();
             comp.Instance.Sections.Should().BeEquivalentTo(new[] { section1, section2 });
@@ -92,7 +94,7 @@ namespace MudBlazor.UnitTests.Components
             comp.Instance.AddSection(section1, false);
             comp.Instance.AddSection(section2, false);
 
-            await comp.InvokeAsync(() => comp.Instance.Update());
+            await comp.InvokeAsync(() => ((IMudStateHasChanged)comp.Instance).StateHasChanged());
 
             comp.RenderCount.Should().Be(2);
 
@@ -162,7 +164,7 @@ namespace MudBlazor.UnitTests.Components
             comp.Instance.AddSection(section2, false);
             comp.Instance.AddSection(section3, false);
 
-            comp.InvokeAsync(() => comp.Instance.Update());
+            comp.InvokeAsync(() => ((IMudStateHasChanged)comp.Instance).StateHasChanged());
 
             for (var i = 0; i < 3; i++)
             {
@@ -204,7 +206,7 @@ namespace MudBlazor.UnitTests.Components
             comp.Instance.AddSection(section2, false);
             comp.Instance.AddSection(section3, false);
 
-            await comp.InvokeAsync(() => comp.Instance.Update());
+            await comp.InvokeAsync(() => ((IMudStateHasChanged)comp.Instance).StateHasChanged());
 
             //active second section
             await comp.InvokeAsync(() => spyMock.FireScrollSectionSectionCenteredEvent(section2.Id));
